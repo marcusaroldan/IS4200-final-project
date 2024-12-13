@@ -1,0 +1,64 @@
+import argparse, nltk, json
+from spacy.tokenizer import Tokenizer
+from spacy.lang.en import English
+import os, mimetypes
+# nltk.download('punkt_tab')
+
+def preprocess_document(document_file_path:str):
+    with open(document_file_path, 'r', encoding='utf-8') as file:
+        documents = json.load(file)
+
+    doc_name = os.path.basename(document_file_path)
+    
+    processed_documents = []
+    
+    for doc_id, (raw_text, image_files) in documents.items():
+        # Step 2.1: Tokenize the raw text
+        tokens = nltk.word_tokenize(raw_text.lower())
+        
+        # Step 2.2: Prepare a document for indexing
+        document = {
+            'doc_id': f'{doc_name}/{doc_id}',
+            'raw_text': raw_text,
+            'tokens': tokens,
+            'image_files': image_files
+        }
+        
+        # Step 2.3: Add the document to the list of processed documents
+        processed_documents.append(document)
+    
+    return processed_documents
+
+def preprocess_corpus(corpus_dir:str):
+    # Create directory to save index
+    index_directory = os.path.join(corpus_dir, 'index')
+    os.makedirs(index_directory, exist_ok=True)
+    
+    index_list = []
+    
+    chunked_document_paths = os.listdir(corpus_dir)
+    
+    for chunked_doc_path in chunked_document_paths:
+        full_doc_path = os.path.join(corpus_dir, chunked_doc_path)
+        # If not a json: skip the file
+        if mimetypes.guess_type(full_doc_path)[0] != 'application/json': continue
+
+        # Process doc into index
+        doc_index = preprocess_document(full_doc_path)
+        index_list.extend(doc_index)
+    
+    # Save the index as a json
+    index_json_path = os.path.join(index_directory, 'index.json')
+    with open(index_json_path, 'wb+') as doc_file:
+            doc_file.write(json.dumps(index_list).encode())
+            
+    print(f'Successfully, wrote index to {index_json_path}.')
+
+    
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Preprocess all aquired documents in the target directory.')
+    parser.add_argument('corpus_dir', type=str, help='Corpus directory')
+    args = parser.parse_args()
+    
+    preprocess_corpus(args.corpus_dir)

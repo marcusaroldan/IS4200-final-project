@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+import fitz as pdf
+import os, json, mimetypes, argparse
+
+def recoverpix(doc, item):
+    xref = item[0]  # xref of PDF image
+    smask = item[1]  # xref of its /SMask
+
+    # special case: /SMask or /Mask exists
+    if smask > 0:
+        pix0 = pdf.Pixmap(doc.extract_image(xref)["image"])
+        if pix0.alpha:  # catch irregular situation
+            pix0 = pdf.Pixmap(pix0, 0)  # remove alpha channel
+        mask = pdf.Pixmap(doc.extract_image(smask)["image"])
+
+        try:
+            pix = pdf.Pixmap(pix0, mask)
+        except:  # fallback to original base image in case of problems
+            pix = pdf.Pixmap(doc.extract_image(xref)["image"])
+
+        if pix0.n > 3:
+            ext = "pam"
+        else:
+            ext = "png"
+
+        return {  # create dictionary expected by caller
+            "ext": ext,
+            "colorspace": pix.colorspace.n,
+            "image": pix.tobytes(ext),
+        }
+
+    # special case: /ColorSpace definition exists
+    # to be sure, we convert these cases to RGB PNG images
+    if "/ColorSpace" in doc.xref_object(xref, compressed=True):
+        pix = pdf.Pixmap(doc, xref)
+        pix = pdf.Pixmap(pdf.csRGB, pix)
+        return {  # create dictionary expected by caller
+            "ext": "png",
+            "colorspace": 3,
+            "image": pix.tobytes("png"),
+        }
+    return doc.extract_image(xref)
+
+def extract_images(document:pdf.Document, doc_id:str, target_dir:str) -> dict[str, list[int]]:
+    # Keep track of seen xrefs
+    seen_xrefs = []
+    
+    # dict to return
+    images:dict[str, list[int]] = {}
+    
+    total_pages = document.page_count
+    
+    for page_num in range(total_pages):
+        page_images = document.get_page_images(page_num)
+        
+        for image in page_images:
+            img_xref = image[0]
+            
+            image_pages = images.get(img_xref, [])
+            image_pages.append(page_num)
+            images[img_xref] = image_pages
+            
+            if img_xref in seen_xrefs: 
+                continue
+            
+            image_pixels = recoverpix(document, image)
+            
+            imgfile = os.path.join(target_dir, f"{doc_id}-{img_xref}.{image_pixels['ext']}")
+            os.makedirs(os.path.dirname(imgfile), exist_ok=True)
+            fout = open(imgfile, "wb")
+            fout.write(image_pixels['image'])
+            fout.close()
+            seen_xrefs.append(img_xref)
+            
+    return images
+
+def extracct_structured_text_with_images(document:pdf.Document, doc_id:str, target_directory:str):
+    # First extract all images and their pages
+    image_directory = extract_images(document, doc_id, target_directory)
+    structure:dict[str, tuple[str, list[str]]] = {}
+    
+    prev_section_start = document.page_count
+    
+    document_outline_items = document.get_toc()
+    for section in reversed(document_outline_items):
+        section_level, section_title, section_page = tuple(section)
+        section_page_num = section_page - 1
+        
+        section_text, section_images = structure.get(section_title, ('', []))
+        
+        # Check for any images which are in this section
+        for image_id, pages in image_directory.items():
+            for page in pages:
+                if page in list(range(section_page_num, prev_section_start, 1)):
+                    section_images.append(image_id)
+                    break
+        
+        section_text += document.load_page(section_page_num).get_text()
+        structure[section_title] = section_text, section_images
+        
+        prev_section_start = section_page
+    return structure
+
+def process_corpus(corpus_dir:str, target_dir:str):
+    # Make directories to hold the chunked documents and the their images
+    image_directory = os.path.join(target_dir, 'media')
+    document_directory = os.path.join(target_dir, 'corpus')
+    
+    os.makedirs(document_directory, exist_ok=True)
+    os.makedirs(image_directory, exist_ok=True)
+    
+    
+    # Iterate through each document in the corpus directory, 
+    # chunk it and save the images to the appropriate directory
+    corpus_document_paths = os.listdir(corpus_dir)
+    for doc_id, document_path in enumerate(corpus_document_paths):
+        full_doc_path = os.path.join(corpus_dir, document_path)
+        # If not a pdf: skip the file
+        if mimetypes.guess_type(full_doc_path)[0] != 'application/pdf': continue
+        
+        # Open the document as a PDF
+        document = pdf.open(full_doc_path)
+        
+        # Extract the text per section and images
+        document_text_images_sections = extracct_structured_text_with_images(document, str(doc_id), image_directory)
+        
+        # Save as JSON
+        document_chunk_file_path = os.path.join(document_directory, f'doc{doc_id}-chunks.json')
+        # print(document_chunk_file_path)
+        # os.makedirs(os.path.dirname(document_chunk_file_path), exist_ok=True)
+        with open(document_chunk_file_path, 'wb+') as doc_file:
+            doc_file.write(json.dumps(document_text_images_sections).encode())
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Process all PDFs in a directory by extracting each section and its images, saving them to the target directory.')
+    parser.add_argument('corpus_dir', type=str, help='The directory which contains the PDFs to be processes')
+    parser.add_argument('target_dir', type=str, help='Directory to which the processed PDFs and images should be saved')
+    args = parser.parse_args()
+    
+    process_corpus(args.corpus_dir, args.target_dir)
