@@ -29,9 +29,9 @@ def preprocess_document(document_file_path:str):
     
     return processed_documents
 
-def preprocess_corpus(corpus_dir:str):
+def preprocess_corpus(corpus_dir:str, target_dir:str):
     # Create directory to save index
-    index_directory = os.path.join(corpus_dir, 'index')
+    index_directory = os.path.join(target_dir, 'index')
     os.makedirs(index_directory, exist_ok=True)
     
     index_list = []
@@ -59,6 +59,7 @@ def preprocess_corpus(corpus_dir:str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Preprocess all aquired documents in the target directory.')
     parser.add_argument('corpus_dir', type=str, help='Corpus directory')
+    parser.add_argument('target_dir', type=str, help='Target directory for index')
     args = parser.parse_args()
     
-    preprocess_corpus(args.corpus_dir)
+    preprocess_corpus(args.corpus_dir, args.target_dir)
