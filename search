@@ -68,5 +68,4 @@ if __name__ == "__main__":
     
     idx = create_index(args.index)
     
-    print("Welcome to the Whoosh Search Engine!")
     interactive_querying(idx)
