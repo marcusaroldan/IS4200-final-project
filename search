@@ -1,0 +1,72 @@
+import os
+import json
+from whoosh import index
+from whoosh.fields import Schema, TEXT, ID, KEYWORD
+from whoosh.qparser import QueryParser
+import argparse 
+
+# whoosh Schema
+schema = Schema(doc_id=ID(stored=True), text=TEXT(stored=True), image_files=KEYWORD(stored=True))
+
+def create_index(index_path:str):
+    if not os.path.exists(index_path):
+        print(f'Index file at {index_path} does not exist. Exiting...')
+        exit(1)
+    
+    # Load the index
+    with open(index_path, 'r') as index_file:
+        index_dict = json.load(index_file)
+    
+    # Create the whoosh index
+    index_base_dir = os.path.dirname(index_path)
+    if index.exists_in(index_base_dir):
+        idx = index.open_dir(index_base_dir)
+    else: idx = index.create_in(index_base_dir, schema=schema)
+    
+    # Feed documents to the index
+    index_writer = idx.writer()
+    for document in index_dict:
+        index_writer.add_document(doc_id=str(document['doc_id']), text=' '.join(map(str, document['tokens'])), image_files=', '.join(map(str, document['image_files'])))
+    
+    index_writer.commit()
+    
+    return idx
+    
+def make_query(query_input:str, index:index.FileIndex):
+    search_engine = index.searcher()
+    
+    parsed_query = QueryParser('text', index.schema).parse(query_input)
+    
+    results = search_engine.search(parsed_query)
+    
+    # Check for results
+    if not results: print(f'No results found for {query_input}.')
+    else:
+        for result in results:
+            print(f"Document ID: {result['doc_id']}")
+            print(f"Text: {result['text'][:300]}...")
+            print(f"Image files: {result['image_files']}")
+            print("-" * 50)
+
+
+def interactive_querying(index:index.FileIndex):
+    print("Please type your search query, or type 'exit' to terminate.")
+    while True:
+        query = input('\nEnter your search query: ').strip()
+
+        if query.lower() == 'exit':
+            print('Exiting...\nGood-bye...')
+            break
+
+        # Query the index
+        make_query(query, index)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Interactively search the supplied index')
+    parser.add_argument('index', type=str, help='Path to the index file')
+    args = parser.parse_args()
+    
+    idx = create_index(args.index)
+    
+    print("Welcome to the Whoosh Search Engine!")
+    interactive_querying(idx)
